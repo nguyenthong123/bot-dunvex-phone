@@ -17,16 +17,26 @@ logging.basicConfig(
     filename='logs/bot.log'
 )
 
-# Initialize Core
-memory = MemoryManager()
-orchestrator = AIOrchestrator(memory)
-indexer = DocumentIndexer(memory)
+# Core placeholders
+memory = None
+orchestrator = None
+indexer = None
 OWNER_ID = os.getenv("OWNER_ID")
+
+async def post_init(application):
+    """Initialize cores inside the active event loop to avoid AsyncLibraryNotFoundError"""
+    global memory, orchestrator, indexer
+    logging.info("[*] Đang khởi tạo các thành phần logic bên trong Event Loop...")
+    memory = MemoryManager()
+    orchestrator = AIOrchestrator(memory)
+    indexer = DocumentIndexer(memory)
+    logging.info("[+] Khởi tạo hoàn tất.")
 
 async def admin_check(update: Update):
     user_id = str(update.effective_chat.id)
     if OWNER_ID and user_id != OWNER_ID:
-        await update.message.reply_text("Xin lỗi, bạn không có quyền sử dụng Bot này.")
+        logging.warning(f"[!] TRUY CẬP BỊ TỪ CHỐI: User {user_id} không khớp với OWNER_ID {OWNER_ID}")
+        await update.message.reply_text(f"Xin lỗi, bạn không có quyền. ID của bạn là: {user_id}")
         return False
     return True
 
@@ -89,7 +99,8 @@ if __name__ == '__main__':
         print("Error: TELEGRAM_BOT_TOKEN not found in .env")
         exit(1)
         
-    application = ApplicationBuilder().token(TOKEN).build()
+    # Build application with post_init hook
+    application = ApplicationBuilder().token(TOKEN).post_init(post_init).build()
     
     start_handler = CommandHandler('start', start)
     clear_handler = CommandHandler('clear', clear)
@@ -103,5 +114,5 @@ if __name__ == '__main__':
     application.add_handler(message_handler)
     application.add_handler(photo_handler)
     
-    print("Bot đang khởi động...")
+    print("Bot đang khởi động (Async Mode)...")
     application.run_polling()

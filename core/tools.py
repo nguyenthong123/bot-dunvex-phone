@@ -14,8 +14,22 @@ class Toolset:
         self.memory = memory_manager
         self.tavily_key = os.getenv("TAVILY_API_KEY")
 
+    def _parse_arg(self, arg, key):
+        """Helper to extract a specific key if arg is a dict/JSON string, or return raw arg"""
+        if isinstance(arg, dict):
+            return arg.get(key, str(arg))
+        if isinstance(arg, str) and (arg.startswith('{') or arg.startswith('[')):
+            try:
+                data = json.loads(arg)
+                if isinstance(data, dict):
+                    return data.get(key, arg)
+            except:
+                pass
+        return arg
+
     async def run_command(self, cmd):
         """Runs a terminal command and returns output"""
+        cmd = self._parse_arg(cmd, "command")
         try:
             print(f"[*] Executing Command: {cmd}")
             result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=120)
@@ -26,13 +40,19 @@ class Toolset:
         except Exception as e:
             return f"[ERROR] {str(e)}"
 
-    async def write_file(self, path, content):
+    async def write_file(self, path, content=None):
         """Creates or overwrites a file with content"""
+        # Handle dict input where path and content might be inside
+        if isinstance(path, dict):
+            content = path.get("content", content)
+            path = path.get("path")
+        else:
+            path = self._parse_arg(path, "path")
+            content = self._parse_arg(content, "content")
+
         try:
             abs_path = os.path.abspath(path)
             print(f"[*] Writing File. Path: {path}")
-            print(f"[*] Absolute Path: {abs_path}")
-            print(f"[*] Current CWD: {os.getcwd()}")
             os.makedirs(os.path.dirname(abs_path), exist_ok=True) if os.path.dirname(abs_path) else None
             with open(abs_path, "w", encoding="utf-8") as f:
                 f.write(content)
@@ -43,6 +63,7 @@ class Toolset:
 
     async def read_file(self, path):
         """Reads a file content for overall reasoning"""
+        path = self._parse_arg(path, "path")
         try:
             print(f"[*] Reading File: {path}")
             if not os.path.exists(path):
@@ -55,12 +76,12 @@ class Toolset:
 
     async def list_files(self, path="."):
         """Lists files recursively to understand project structure (ignoring junk)"""
+        path = self._parse_arg(path, "path") or "."
         try:
             print(f"[*] Listing Files in: {path}")
             ignore_list = [".git", "venv", "__pycache__", "node_modules", ".gemini", "data"]
             file_tree = []
             for root, dirs, files in os.walk(path):
-                # Filter ignore list
                 dirs[:] = [d for d in dirs if d not in ignore_list]
                 level = root.replace(path, "").count(os.sep)
                 indent = "  " * level
@@ -74,8 +95,15 @@ class Toolset:
         except Exception as e:
             return f"[ERROR] Không thể liệt kê file: {str(e)}"
 
-    async def edit_file(self, path, target_text, replacement_text):
+    async def edit_file(self, path, target_text=None, replacement_text=None):
         """Surgically replaces a specific part of code in a file"""
+        if isinstance(path, dict):
+            target_text = path.get("target_text", target_text)
+            replacement_text = path.get("replacement_text", replacement_text)
+            path = path.get("path")
+        else:
+            path = self._parse_arg(path, "path")
+
         try:
             print(f"[*] Patching File: {path}")
             if not os.path.exists(path):
@@ -85,14 +113,12 @@ class Toolset:
                 content = f.read()
             
             if target_text not in content:
-                print(f"[!] Target text not found for patching")
                 return f"[ERROR] Không tìm thấy đoạn mã cần thay thế trong file {path}."
             
             new_content = content.replace(target_text, replacement_text)
             with open(path, "w", encoding="utf-8") as f:
                 f.write(new_content)
             
-            print(f"[*] Patch Applied Successfully")
             return f"[SUCCESS] Đã sửa file {path} thành công."
         except Exception as e:
             return f"[ERROR] Lỗi khi sửa file: {str(e)}"
