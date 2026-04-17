@@ -19,27 +19,20 @@ class AIOrchestrator:
         self.client = None # Lazy init to avoid loop issues
 
     def _get_system_prompt(self):
-        return """BẠN LÀ MỘT 'SYSTEM AGENT' THỰC THI. NHIỆM VỤ CỦA BẠN LÀ LÀM VIỆC VỚI FILE VÀ TERMINAL.
+        return f"""BẠN LÀ MỘT 'SYSTEM AGENT' THỰC THI TOÀN QUYỀN. NHIỆM VỤ CỦA BẠN LÀ QUẢN LÝ TỆP TIN VÀ CẬP NHẬT THÔNG TIN TỪ INTERNET.
+
+SỨ MỆNH:
+- KHÔNG BAO GIỜ nói "không khả dụng" nếu công cụ đã được liệt kê bên dưới.
+- LUÔN LUÔN ưu tiên sử dụng 'internet_search' cho các thông tin biến động: Giá vàng, tỷ giá, thời tiết, tin tức.
+- Phải hành động trước, giải thích sau.
 
 QUY TẮC TRẢ LỜI (BẮT BUỘC):
-1. PHONG CÁCH: Trả lời ngắn gọn, tập trung vào hành động.
-2. QUYẾT ĐOÁN: KHÔNG hỏi ý kiến, KHÔNG xin phép trước khi thực hiện các tác vụ kỹ thuật (ghi file, chạy lệnh). Nếu người dùng yêu cầu, hãy làm ngay lập tức bằng công cụ.
-3. TIẾT KIỆM TOKEN: KHÔNG kiểm tra lại môi trường (python --version, check_setup, vv) nếu vừa thực hiện xong ở bước trước. Hãy tập trung hoàn thành yêu cầu cốt lõi của người dùng.
-4. CẤM EMOJI: Tuyệt đối không sử dụng bất kỳ icon hay biểu tượng cảm xúc nào.
-5. HẠN CHẾ MARKDOWN: Không dùng tiêu đề lớn, chỉ dùng dấu xuống dòng.
-6. KHÔNG LỜI HỨA SUÔNG: Tuyệt đối không trả lời "Tôi đã làm..." nếu chưa thực sự gọi [CALL: ...] và nhận được kết quả SUCCESS từ hệ thống.
+1. QUYẾT ĐOÁN: KHÔNG hỏi ý kiến, KHÔNG xin phép. Nếu người dùng yêu cầu, hãy làm ngay lập tức bằng công cụ.
+2. TIẾT KIỆM TOKEN: KHÔNG kiểm tra môi trường thừa thãi.
+3. CẤM EMOJI: Tuyệt đối không dùng icon.
+4. THỰC TẾ: Chỉ báo cáo SUCCESS khi nhận được phản hồi từ hệ thống.
 
-QUY TRÌNH THỰC THI:
-- LUÔN gọi 'list_files' trước khi sửa hoặc tạo file để nắm quyền kiểm soát thư mục.
-- GITHUB: Phải luôn thực hiện 'git add', 'git commit' và 'git push' sau khi thay đổi code nếu dự án có Git. 
-- LLM NỘI BỘ: Dùng các công cụ [LOCAL] khi cần phân tích sâu hoặc xem ảnh.
-
-CÔNG CỤ:
-- list_files(path), read_file(path), edit_file(path, target, replacement), write_file(path, content), run_command(cmd).
-- [LOCAL] ask_local_coder(prompt), analyze_local_image(image_path, prompt).
-- internet_search(query), document_search(query).
-
-CÚ PHÁP BẮT BUỘC: [CALL: tool_name("arg1", "arg2")]""" 
+{self.tools.get_tools_definition()}"""
 
     async def get_response(self, user_id, user_text, image_path=None):
         """Unified entry point for AI reasoning with agentic tool usage"""
@@ -76,12 +69,23 @@ CÚ PHÁP BẮT BUỘC: [CALL: tool_name("arg1", "arg2")]"""
         max_loops = 15
         for _ in range(max_loops):
             try:
-                logging.info(f"[*] Calling AI (DeepSeek R1)... Loop {_ + 1}")
+                logging.info(f"[*] Sending prompt to DeepSeek... Messages count: {len(messages)}")
+                # Log first 500 chars of system prompt for verification
+                logging.debug(f"[*] System Prompt Preview: {messages[0]['content'][:500]}")
+                
                 response = await self.client.chat.completions.create(
                     model="deepseek-reasoner",
                     messages=messages,
-                    timeout=120.0
+                    max_tokens=4096
                 )
+                
+                ai_output = response.choices[0].message.content or ""
+                reasoning = getattr(response.choices[0].message, 'reasoning_content', "")
+                
+                logging.info(f"[*] AI Response received. Length: {len(ai_output)} chars.")
+                if len(ai_output) == 0:
+                    logging.warning("[!] AI returned empty content. Reasoning preview: " + str(reasoning)[:200])
+                
                 if not response.choices or len(response.choices) == 0:
                     logging.error("[!] Error: No choices returned from AI.")
                     return "Lỗi: AI không trả về kết quả."
@@ -114,35 +118,13 @@ CÚ PHÁP BẮT BUỘC: [CALL: tool_name("arg1", "arg2")]"""
                         
                         logging.info(f"[*] Agentic Action: {tool_name}({len(args)} args)")
                     
-                    try:
-                        logging.info(f"[*] Executing Tool: {tool_name}")
-                        result = ""
-                        if tool_name == "internet_search" and len(args) >= 1:
-                            result = await self.tools.search_web(args[0])
-                        elif tool_name == "document_search" and len(args) >= 1:
-                            result = await self.tools.search_docs(args[0])
-                        elif tool_name == "list_files" and len(args) >= 1:
-                            result = await self.tools.list_files(args[0])
-                        elif tool_name == "read_file" and len(args) >= 1:
-                            result = await self.tools.read_file(args[0])
-                        elif tool_name == "edit_file" and len(args) >= 3:
-                            result = await self.tools.edit_file(args[0], args[1], args[2])
-                        elif tool_name == "run_command" and len(args) >= 1:
-                            result = await self.tools.run_command(args[0])
-                        elif tool_name == "write_file" and len(args) >= 2:
-                            result = await self.tools.write_file(args[0], args[1])
-                        elif tool_name == "ask_local_coder" and len(args) >= 1:
-                            result = await self.tools.ask_local_coder(args[0])
-                        elif tool_name == "analyze_local_image":
-                            # Use image_path from message if not provided in args
-                            path = args[0] if len(args) >= 1 and os.sep in args[0] else image_path
-                            prompt = args[1] if len(args) >= 2 else "Mô tả hình ảnh này"
-                            result = await self.tools.analyze_local_image(path, prompt)
-                        
-                        print(f"[*] Tool execution finished. Result length: {len(str(result))}")
-                    except Exception as tool_e:
-                        print(f"[!] Tool Error: {str(tool_e)}")
-                        result = f"Lỗi thực thi công cụ: {str(tool_e)}"
+                        try:
+                            logging.info(f"[*] Executing Tool: {tool_name}")
+                            result = await self.tools.execute_tool(tool_name, args)
+                            print(f"[*] Tool execution finished. Result length: {len(str(result))}")
+                        except Exception as tool_e:
+                            print(f"[!] Tool Error: {str(tool_e)}")
+                            result = f"Lỗi thực thi công cụ: {str(tool_e)}"
 
                     # Feed result back to AI as a user message (feedback from system)
                     messages.append({"role": "assistant", "content": ai_output})

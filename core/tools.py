@@ -192,12 +192,54 @@ class Toolset:
         except Exception as e:
             return f"[ERROR] Lỗi khi xử lý ảnh qua LLM nội bộ: {str(e)}"
 
+    async def execute_tool(self, tool_name, args):
+        """Unified switcher to execute any tool by name with list of args"""
+        try:
+            print(f"[*] Dispatching Tool: {tool_name} with {len(args)} args")
+            if tool_name == "internet_search" and len(args) >= 1:
+                return await self.search_web(args[0])
+            elif tool_name == "document_search" and len(args) >= 1:
+                return await self.search_docs(args[0])
+            elif tool_name == "list_files" and len(args) >= 1:
+                return await self.list_files(args[0])
+            elif tool_name == "read_file" and len(args) >= 1:
+                return await self.read_file(args[0])
+            elif tool_name == "edit_file" and len(args) >= 3:
+                return await self.edit_file(args[0], args[1], args[2])
+            elif tool_name == "run_command" and len(args) >= 1:
+                return await self.run_command(args[0])
+            elif tool_name == "write_file" and len(args) >= 2:
+                return await self.write_file(args[0], args[1])
+            elif tool_name == "ask_local_coder" and len(args) >= 1:
+                return await self.ask_local_coder(args[0])
+            elif tool_name == "analyze_local_image" and len(args) >= 1:
+                return await self.analyze_local_image(args[0], args[1] if len(args) > 1 else "Mô tả hình ảnh này")
+            else:
+                return f"[ERROR] Tool '{tool_name}' không tồn tại hoặc thiếu đối số."
+        except Exception as e:
+            return f"[ERROR] Lỗi thực thi '{tool_name}': {str(e)}"
+
+    def get_tools_definition(self):
+        """Returns the prompt-friendly description of available tools"""
+        return """CÔNG CỤ KHẢ DỤNG:
+- internet_search(query): Tìm kiếm thông tin mới nhất trên Google/Internet (dùng cho giá vàng, thời tiết, tin tức).
+- document_search(query): Tra cứu tài liệu đào tạo nội bộ.
+- list_files(path): Liệt kê tệp tin trong thư mục.
+- read_file(path): Đọc nội dung tệp tin.
+- write_file(path, content): Tạo mới hoặc ghi đè toàn bộ tệp tin.
+- edit_file(path, target, replacement): Sửa một đoạn mã cụ thể trong tệp.
+- run_command(cmd): Chạy lệnh terminal (git, ls, cat, vv).
+- [LOCAL] ask_local_coder(prompt): Dùng LLM chuyên code nội bộ để giải quyết vấn đề logic khó.
+- [LOCAL] analyze_local_image(image_path, prompt): Dùng LLM Vision nội bộ để xem và phân tích ảnh.
+
+CÚ PHÁP: [CALL: tool_name("arg1", "arg2", ...)]"""
+
 if __name__ == "__main__":
     # Quick test
     import asyncio
     from core.memory import MemoryManager
     async def test():
         tools = Toolset(MemoryManager())
-        res = await tools.search_web("thời tiết Hà Nội hôm nay")
+        res = await tools.search_web("giá vàng hôm nay")
         print(res)
     asyncio.run(test())

@@ -73,7 +73,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not answer or answer.strip() == "":
         answer = "⚠️ Xin lỗi, AI không thể đưa ra phản hồi lúc này. Vui lòng thử lại sau."
     
-    await update.message.reply_text(answer)
+    await update.message.reply_text(answer, parse_mode="Markdown")
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_chat.id)
@@ -91,7 +91,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not answer or answer.strip() == "":
         answer = "⚠️ Không thể phân tích hình ảnh này. Hãy kiểm tra lại tệp tin hoặc thử lại sau."
         
-    await update.message.reply_text(answer)
+    await update.message.reply_text(answer, parse_mode="Markdown")
 
 if __name__ == '__main__':
     TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
