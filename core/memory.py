@@ -30,6 +30,15 @@ class MemoryManager:
                 tags UNINDEXED
             )
         ''')
+
+        # Configuration storage (Commercial addition)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT,
+                updated_at DATETIME
+            )
+        ''')
         
         conn.commit()
         conn.close()
@@ -81,5 +90,22 @@ class MemoryManager:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         cursor.execute("DELETE FROM history WHERE user_id = ?", (user_id,))
+        conn.commit()
+        conn.close()
+    def get_setting(self, key, default=None):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
+        row = cursor.fetchone()
+        conn.close()
+        return row[0] if row else default
+
+    def set_setting(self, key, value):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)",
+            (key, str(value), datetime.now())
+        )
         conn.commit()
         conn.close()

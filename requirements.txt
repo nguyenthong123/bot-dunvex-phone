@@ -3,3 +3,4 @@ openai
 flask
 python-dotenv
 httpx
+mcp
