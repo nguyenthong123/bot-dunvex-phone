@@ -67,13 +67,16 @@ class StreamingOrchestrator(AIOrchestrator):
             path = path.replace(virtual_prefix.strip("/"), "")
             
         # 3. LOCKDOWN: Force path to be inside actual_prefix
+        if path.startswith(actual_prefix):
+            return path
+            
         # If the path is already absolute and outside, we force it back
         if path.startswith("/data/data/com.termux/files/home/") and not path.startswith(actual_prefix):
             logging.warning(f"[!] Path Escape Attempt Detected: {path}. Forcing Lockdown.")
             return os.path.join(actual_prefix, os.path.basename(path))
             
         # Standard relative path join
-        return os.path.join(actual_prefix, path)
+        return os.path.join(actual_prefix, path.lstrip("/"))
 
     def _find_balanced_tool_call(self, text):
         """
@@ -106,7 +109,10 @@ class StreamingOrchestrator(AIOrchestrator):
             call_block = text[start_idx:end_idx+1]
         
         # Extract tool name and raw arguments
-        # We try strict matching first, then fallback to partial matching
+        # CLEANUP: Handle nested [CALL[CALL tags found in some AI outputs
+        if call_block.startswith("[CALL[CALL"):
+            call_block = call_block.replace("[CALL[CALL", "[CALL", 1)
+        
         strict_match = re.search(r"\[CALL:\s*(\w+)\s*\((.*)\)\]", call_block, re.DOTALL)
         if strict_match:
              return strict_match.group(1).strip(), strict_match.group(2).strip()
@@ -303,10 +309,17 @@ class StreamingOrchestrator(AIOrchestrator):
                         continue
                     except Exception as tool_e:
                         logging.error(f"[!] Tool Runtime Error: {tool_e}")
-                        yield ('status', f"⚠️ Lỗi thực thi: {str(tool_e)[:50]}... Đang tự động sửa lỗi.")
-                        yield ('tool_end', f"Lỗi thực thi: {tool_e}")
-                        messages.append({"role": "assistant", "content": current_loop_content})
                         messages.append({"role": "user", "content": f"[LỖI HỆ THỐNG]: {tool_e}. Hãy phân tích và thử lại."})
+                        continue
+                
+                # RECOVERY: Detect fragmented CALL tags at the end of content
+                if "[CALL" in current_loop_content and not tool_name:
+                    if followup_count < 3:
+                        followup_count += 1
+                        logging.warning(f"[!] Fragmented CALL detected at end of content. Attempting Recovery {followup_count}/3.")
+                        yield ('status', "🔄 Phát hiện lệnh dở dang! Đang tự động khôi phục...")
+                        messages.append({"role": "assistant", "content": current_loop_content})
+                        messages.append({"role": "user", "content": "Bạn đang viết dở câu lệnh [CALL:...]. Hãy viết nốt phần tham số còn lại và dấu đóng ngoặc."})
                         continue
                 
                 break

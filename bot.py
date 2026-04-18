@@ -168,6 +168,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # 3. Cập nhật UI mỗi 3 giây để tránh bị Telegram rate limit (Flood Control)
             if now - last_update_time > 3.0:
                 safe_status = html.escape(current_status)
+                if "Đang điều phối" in safe_status:
+                    safe_status = f"🧠 {safe_status}..."
+                
                 display_text = f"<b>{safe_status}</b>\n\n"
                 # if full_reasoning:
                 #    # Rút gọn reasoning nếu quá dài để hiển thị live
