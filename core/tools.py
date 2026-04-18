@@ -2,12 +2,11 @@ import os
 import httpx
 import json
 import base64
+import logging
 from dotenv import load_dotenv
 import subprocess
-from core.ollama_manager import OllamaOnDemandManager
 
 load_dotenv()
-ollama_manager = OllamaOnDemandManager()
 
 class Toolset:
     def __init__(self, memory_manager):
@@ -44,22 +43,19 @@ class Toolset:
 
         # 3. LOCKDOWN: Ép buộc đường dẫn tuyệt đối phải nằm trong project root
         actual_root = self.actual_home.rstrip('/')
-        abs_p = os.path.abspath(p)
+        if p.startswith(actual_root):
+            return p
         
-        # Nếu đường dẫn trỏ ra ngoài project (như llama.cpp hay .ollama), ép về root
+        abs_p = os.path.abspath(p)
         if not abs_p.startswith(actual_root):
-            # logging.warning(f"[!] Tool Isolation Triggered: {abs_p}") # Optional log
-            # Trả về đường dẫn an toàn nhất có thể (thư mục hiện tại của dự án)
-            safe_p = os.path.join(actual_root, os.path.basename(abs_p))
-            return safe_p
-            
+            return os.path.join(actual_root, p.lstrip('/'))
         return abs_p
 
     def get_available_tool_names(self):
         return [
             'internet_search', 'document_search', 'list_files', 
             'read_file', 'edit_file', 'run_command', 'write_file',
-            'ask_local_coder', 'analyze_local_image', 'local_llama_reasoning'
+            'google_apps_script', 'analyze_image', 'verify_code'
         ]
 
     def _parse_arg(self, arg, key):
@@ -171,23 +167,96 @@ class Toolset:
         doc_info = '\n'.join([f'- {r[0]}: {r[1]}...' for r in results])
         return f'Thông tin tài liệu:\n{doc_info}'
 
-    async def ask_local_coder(self, prompt):
-        print(f'[*] Calling Local Coder (Llama/Ollama)...')
-        response = await ollama_manager.generate(
-            prompt=prompt, 
-            system_prompt='Bạn là mô hình Llama chạy cục bộ, chuyên gia về đọc hiểu và phân tích cấu trúc mã nguồn. Hãy trả lời ngắn gọn, tập trung vào kỹ thuật.'
-        )
-        return f'[LLAMA ANALYSIS RESPONSE]:\n{response}'
 
-    async def analyze_local_image(self, image_path, prompt='Mô tả ảnh'):
-        image_path = self._remap_path(image_path)
-        if not os.path.exists(image_path): return f'[ERROR] Không thấy ảnh: {image_path}'
-        response = await ollama_manager.generate(f'Phân tích ảnh {image_path}: {prompt}')
-        return f'[LOCAL VISION RESPONSE]\n{response}'
+    async def google_apps_script(self, action, project_dir="."):
+        """Bridge for Google Apps Script using clasp binary."""
+        target_dir = self._remap_path(project_dir)
+        cmd = f"cd {target_dir} && clasp {action}"
+        print(f"[*] Executing Clasp: {cmd}")
+        return await self.run_command(cmd)
 
-    async def local_llama_reasoning(self, prompt):
-        response = await ollama_manager.generate(prompt)
-        return f'[LOCAL LLAMA RESPONSE]\n{response}'
+    async def analyze_image(self, image_path, prompt="Mô tả hình ảnh này một cách chi tiết."):
+        """Analyzes an image using Google Gemini 1.5 Flash API."""
+        actual_path = self._remap_path(image_path)
+        if not os.path.exists(actual_path):
+            return f"[ERROR] Không tìm thấy ảnh tại: {image_path}"
+
+        api_key = self.memory.get_setting("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
+        if not api_key:
+            return "[ERROR] GEMINI_API_KEY chưa được cấu hình trong .env"
+
+        try:
+            with open(actual_path, "rb") as f:
+                img_data = base64.b64encode(f.read()).decode("utf-8")
+
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+            payload = {
+                "contents": [{
+                    "parts": [
+                        {"text": prompt},
+                        {"inline_data": {"mime_type": "image/jpeg", "data": img_data}}
+                    ]
+                }]
+            }
+
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(url, json=payload)
+                response.raise_for_status()
+                data = response.json()
+                
+                # Extract text from Gemini response
+                if "candidates" in data and data["candidates"]:
+                    return data["candidates"][0]["content"]["parts"][0]["text"]
+                return "[ERROR] Gemini không trả về kết quả phân tích."
+
+        except Exception as e:
+            return f"[ERROR] Lỗi khi phân tích ảnh qua Gemini: {str(e)}"
+
+    async def verify_code(self, path, goal_context="Kiểm tra logic và tính đúng đắn."):
+        """Automated Quality Gate: Syntax Linter + Gemini logic review."""
+        actual_path = self._remap_path(path)
+        if not os.path.exists(actual_path):
+            return f"[ERROR] Không tìm thấy file để verify: {path}"
+
+        # 1. Syntax Check (Speed Gate)
+        ext = path.split('.')[-1].lower()
+        linter_result = "[OK] Syntax hợp lệ."
+        if ext == 'py':
+            l_check = await self.run_command(f"python3 -m py_compile {actual_path}")
+            if "error" in l_check.lower(): linter_result = f"[LỖI CÚ PHÁP PYTHON]: {l_check}"
+        elif ext in ['js', 'gs']:
+            l_check = await self.run_command(f"node -c {actual_path}")
+            if l_check.strip(): linter_result = f"[LỖI CÚ PHÁP JS/GAS]: {l_check}"
+
+        if "[LỖI]" in linter_result:
+            return linter_result
+
+        # 2. Logic Review (Gemini Critique)
+        api_key = self.memory.get_setting("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
+        if not api_key:
+            return f"{linter_result} (Lưu ý: Không có Gemini API Key để review logic)."
+
+        try:
+            with open(actual_path, "r") as f:
+                code_content = f.read()
+
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+            prompt = f"""Bạn là một Senior Developer (Kỹ sư trưởng). Hãy review đoạn code sau cho dự án OpenClaw. 
+Bối cảnh yêu cầu: {goal_context}
+Code:
+```{ext}
+{code_content}
+```
+YÊU CẦU: Nếu có lỗi logic, thiếu sót hoặc code rác, hãy trả về kết quả bắt đầu bằng '[LỖI LOGIC]'. Nếu code tốt, hãy trả về '[PASSED]'. Trả lời ngắn gọn."""
+            
+            payload = {"contents": [{"parts": [{"text": prompt}]}]}
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                res = await client.post(url, json=payload)
+                res.raise_for_status()
+                review = res.json()["candidates"][0]["content"]["parts"][0]["text"]
+                return f"{linter_result}\n[REVIEW KỸ SƯ TRƯỞNG]: {review}"
+        except Exception as e:
+            return f"{linter_result}\n[REVIEW]: Lỗi khi gọi Gemini: {str(e)}"
 
     async def execute_tool(self, tool_name, args):
         try:
@@ -198,9 +267,9 @@ class Toolset:
             elif tool_name == 'edit_file': return await self.edit_file(args[0], args[1], args[2])
             elif tool_name == 'run_command': return await self.run_command(args[0])
             elif tool_name == 'write_file': return await self.write_file(args[0], args[1])
-            elif tool_name == 'ask_local_coder': return await self.ask_local_coder(args[0])
-            elif tool_name == 'analyze_local_image': return await self.analyze_local_image(args[0], args[1] if len(args) > 1 else 'Mô tả')
-            elif tool_name == 'local_llama_reasoning': return await self.local_llama_reasoning(args[0])
+            elif tool_name == 'google_apps_script': return await self.google_apps_script(args[0], args[1] if len(args) > 1 else ".")
+            elif tool_name == 'analyze_image': return await self.analyze_image(args[0], args[1] if len(args) > 1 else "Mô tả hình ảnh này.")
+            elif tool_name == 'verify_code': return await self.verify_code(args[0], args[1] if len(args) > 1 else "Kiểm tra toàn diện.")
             else: return f'[ERROR] Tool "{tool_name}" không tồn tại.'
         except Exception as e: return f'[ERROR] Lỗi thực thi tool: {str(e)}'
 
@@ -211,7 +280,7 @@ class Toolset:
 - read_file(path): Đọc nội dung file thô.
 - write_file(path, content), edit_file(path, target, replacement): Quản lý file.
 - run_command(cmd): Thực thi lệnh terminal.
-- ask_local_coder(prompt): [BẮT BUỘC KHI ĐỌC CODE] Gửi yêu cầu để Llama (mô hình AI cục bộ) đọc, hiểu và phân tích logic của các file code. Đây là cộng sự đắc lực của bạn.
-- analyze_local_image(image_path, prompt): Phối hợp với Llama-Vision để nhìn và hiểu ảnh.
-- local_llama_reasoning(prompt): Hỏi ý kiến Llama về một vấn đề logic bất kỳ.
+- google_apps_script(action, project_dir): Quản lý Apps Script. Action gồm: 'push', 'pull', 'status'.
+- analyze_image(path, prompt): Phân tích hình ảnh (Vision). Trả về mô tả nội dung ảnh.
+- verify_code(path, context): KIỂM DUYỆT CODE. PHẢI dùng sau khi 'write_file' để Kỹ sư trưởng review logic.
 CÚ PHÁP: [CALL: tool_name("arg1", "arg2", ...)]"""

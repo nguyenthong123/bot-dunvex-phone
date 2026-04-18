@@ -17,10 +17,6 @@ graph TD
         Orchestrator -- Request --> DS["DeepSeek-R1 (Reasoning Cloud)"]
         DS -- Streamed Chunks --> Orchestrator
         
-        %% Local Analysis
-        Orchestrator -- Analysis Request --> LocalCoder["Local Analysis (Llama 3.2 1B)"]
-        LocalCoder -- Context --> Orchestrator
-        
         %% Tool Execution
         Orchestrator -- Tool Call --> ToolManager[Tool Gateway]
         subgraph "Tool Execution Layer"
@@ -58,7 +54,6 @@ graph LR
 | :--- | :--- | :--- |
 | **`bot.py`** | Handles Telegram connectivity, polling, and HTML UI updates. | High (Interface) |
 | **`streaming_ai.py`** | The "Maestro". Extracts tools from DeepSeek streams. | Max (Logic) |
-| **`ollama_manager.py`**| Manages Llama 3.2 1B for heavy local code analysis. | Medium (Worker) |
 | **`tools.py`** | Directly interacts with the Android filesystem. | Low (Worker) |
 | **`mcp_manager.py`** | Bridges with GitHub and external servers. | Medium (Gateway) |
 | **`memory.db`** | SQLite database storing all chat history. | Persistent (Storage) |

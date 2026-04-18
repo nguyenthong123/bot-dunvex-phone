@@ -148,13 +148,7 @@ class StreamingOrchestrator(AIOrchestrator):
         
         current_content = user_text
         if image_path:
-            try:
-                yield ('status', "👁️ Đang phân tích hình ảnh...")
-                image_description = await self.tools.analyze_local_image(image_path, "Mô tả chi tiết nội dung hình ảnh.")
-                current_content = f"[KẾT QUẢ THỊ GIÁC NỘI BỘ]: {image_description}\n---\nYÊU CẦU NGƯỜI DÙNG: {user_text}"
-            except Exception as v_e:
-                logging.error(f"[!] Vision Error: {v_e}")
-                current_content += f"\n[Lỗi phân tích ảnh: {v_e}]"
+            current_content += f"\n[HÀNH ĐỘNG CẦN THIẾT]: Có một tệp hình ảnh tại {image_path}. Nếu bạn cần biết nội dung ảnh để thực hiện yêu cầu, hãy sử dụng công cụ 'analyze_image(\"{image_path}\")' ngay lập tức."
         
         # Truncate content to prevent 400 Bad Request (Max ~100k chars for safety)
         safe_content = current_content[:100000] + "... [Dữ liệu quá lớn đã bị cắt tỉa]" if len(current_content) > 100000 else current_content
@@ -288,20 +282,31 @@ class StreamingOrchestrator(AIOrchestrator):
                         
                         yield ('tool_end', result)
                         
-                        # 50K SHIELD: Absolute protection against Token Overflow (400 Bad Request)
+                        # 50K SHIELD
                         safe_result = str(result)
                         if len(safe_result) > 50000:
-                            logging.warning(f"[!] Tool output too large ({len(safe_result)} chars). Truncating to 50k.")
-                            safe_result = safe_result[:50000] + "\n\n... [KẾT QUẢ QUÁ LỚN - ĐÃ CẮT TỈA 50K CHARS ĐỂ BẢO VỆ BỘ NHỚ] ..."
+                            safe_result = safe_result[:50000] + "\n\n... [KẾT QUẢ QUÁ LỚN - ĐÃ CẮT TỈA] ..."
                             
                         messages.append({"role": "assistant", "content": current_loop_content})
-                        messages.append({"role": "user", "content": f"[KẾT QUẢ HỆ THỐNG]: {safe_result}"})
+                        
+                        # CODE GUARDIAN: Force acknowledgement of errors OR Reviewer feedback
+                        if "Lỗi" in safe_result or "[ERROR]" in safe_result or "[LỖI LOGIC]" in safe_result:
+                            logging.warning(f"[!] Quality Gate Failure in Stream: {safe_result}. Yielding recovery status.")
+                            yield ('status', f"🔍 KỸ SƯ TRƯỞNG: Phát hiện lỗi trong code. Đang yêu cầu sửa lại...")
+                            messages.append({"role": "user", "content": f"[CẢNH BÁO TỪ KỸ SƯ TRƯỞNG]: Code của bạn bị lỗi hoặc không đạt yêu cầu: {safe_result}. Bạn PHẢI viết lại bản sửa lỗi ngay lập tức."})
+                        elif "[PASSED]" in safe_result:
+                            logging.info("[*] Quality Gate PASSED in Stream.")
+                            yield ('status', "✅ Kỹ sư trưởng đã phê duyệt code. Đang hoàn tất...")
+                            messages.append({"role": "user", "content": f"[HỆ THỐNG]: Kỹ sư trưởng đã phê duyệt code. Kết quả: {safe_result}"})
+                        else:
+                            messages.append({"role": "user", "content": f"[KẾT QUẢ HỆ THỐNG]: {safe_result}"})
                         continue
                     except Exception as tool_e:
                         logging.error(f"[!] Tool Runtime Error: {tool_e}")
+                        yield ('status', f"⚠️ Lỗi thực thi: {str(tool_e)[:50]}... Đang tự động sửa lỗi.")
                         yield ('tool_end', f"Lỗi thực thi: {tool_e}")
                         messages.append({"role": "assistant", "content": current_loop_content})
-                        messages.append({"role": "user", "content": f"[LỖI HỆ THỐNG]: {tool_e}"})
+                        messages.append({"role": "user", "content": f"[LỖI HỆ THỐNG]: {tool_e}. Hãy phân tích và thử lại."})
                         continue
                 
                 break

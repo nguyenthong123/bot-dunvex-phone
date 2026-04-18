@@ -19,14 +19,14 @@ class MCPManager:
         self.tools_map: Dict[str, str] = {} # tool_name -> server_name
         self.is_initialized = False
 
-    async def connect_to_server(self, name: str, command: str, args: List[str]):
+    async def connect_to_server(self, name: str, command: str, args: List[str], env: Optional[Dict[str, str]] = None):
         """Connect to an MCP server via stdio."""
         if not HAS_MCP:
             logger.error("MCP library not installed. Cannot connect to server.")
             return False
 
         try:
-            server_params = StdioServerParameters(command=command, args=args)
+            server_params = StdioServerParameters(command=command, args=args, env=env)
             transport = await self.exit_stack.enter_async_context(stdio_client(server_params))
             session = await self.exit_stack.enter_async_context(ClientSession(transport[0], transport[1]))
             

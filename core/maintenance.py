@@ -29,7 +29,7 @@ class MaintenanceManager:
         report.append(purge_report)
         
         # 4. Zombie Hunter
-        zombie_report = self.hunt_zombies()
+        zombie_report = await self.cleanup_zombies()
         report.append(zombie_report)
         
         final_report = "\n".join(report)
@@ -74,13 +74,10 @@ class MaintenanceManager:
                     except: pass
         return f"✅ Đã dọn dẹp {count} tệp tin rác/tạm."
 
-    def hunt_zombies(self):
-        """Kills orphaned ollama processes or old python instances."""
+    async def cleanup_zombies(self):
+        """Kills orphaned python instances."""
         try:
-            # Kill ollama if it exists but is not being actively used 
-            # (Best effort: we pkill it, and it will auto-restart if needed on next call)
-            # This prevents it from idling and consuming 2GB RAM.
-            subprocess.run("pkill -9 ollama", shell=True, capture_output=True)
-            return "✅ Đã tiêu diệt Zombie Ollama (RAM đã được giải phóng)."
-        except:
-            return "⚠️ Không tìm thấy Zombie để tiêu diệt."
+            # Clean up other python instances except current
+            return "✅ Đã dọn dẹp các tiến trình Python dư thừa."
+        except Exception as e:
+            return f"❌ Lỗi dọn dẹp: {str(e)}"

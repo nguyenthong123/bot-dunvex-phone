@@ -169,10 +169,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if now - last_update_time > 3.0:
                 safe_status = html.escape(current_status)
                 display_text = f"<b>{safe_status}</b>\n\n"
-                if full_reasoning:
-                    # Rút gọn reasoning nếu quá dài để hiển thị live
-                    short_reasoning = full_reasoning[-500:] if len(full_reasoning) > 500 else full_reasoning
-                    display_text += f"<i>{html.escape(short_reasoning)}...</i>\n\n"
+                # if full_reasoning:
+                #    # Rút gọn reasoning nếu quá dài để hiển thị live
+                #    short_reasoning = full_reasoning[-500:] if len(full_reasoning) > 500 else full_reasoning
+                #    display_text += f"<i>{html.escape(short_reasoning)}...</i>\n\n"
                 
                 if full_content:
                     display_text += html.escape(full_content[-300:]) # Show last 300 chars of content
@@ -199,10 +199,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 4. Gửi kết quả cuối cùng hoàn chỉnh
         # Định dạng: Suy luận trong Spoiler + Câu trả lời
         final_text = ""
-        if full_reasoning:
-            # HTML Spoiler using <tg-spoiler>
-            safe_reasoning = html.escape(full_reasoning[:1000])
-            final_text += f"<b>[SUY LUẬN]</b>\n<tg-spoiler>{safe_reasoning}...</tg-spoiler>\n\n"
+        # final_text += f"<b>[SUY LUẬN]</b>\n<tg-spoiler>{html.escape(full_reasoning[:1000])}...</tg-spoiler>\n\n"
         
         final_text += html.escape(full_content) if full_content else "Tôi đã xử lý xong yêu cầu của bạn."
         
@@ -216,21 +213,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_chat.id)
-    # Get the highest resolution photo
     photo_file = await update.message.photo[-1].get_file()
     os.makedirs("data/photos", exist_ok=True)
     file_path = f"data/photos/{photo_file.file_id}.jpg"
     await photo_file.download_to_drive(file_path)
     
-    await update.message.reply_text("Tôi đã nhận được ảnh. Đang phân tích hình ảnh nội bộ...")
-    
-    # Call orchestrator with image context
-    answer = await orchestrator.get_response(user_id, "Phân tích ảnh này cho tôi", image_path=file_path)
-    
-    if not answer or answer.strip() == "":
-        answer = "⚠️ Không thể phân tích hình ảnh này. Hãy kiểm tra lại tệp tin hoặc thử lại sau."
-        
-    await send_safe_message(update, answer)
+    # Use streaming handler for unified UX
+    await handle_message(update, context, image_path=file_path)
 
 async def main():
     TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
